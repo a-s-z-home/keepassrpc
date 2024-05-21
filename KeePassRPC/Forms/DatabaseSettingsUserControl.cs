@@ -1,9 +1,9 @@
-﻿using KeePassLib;
-using KeePassRPC.DataExchangeModel;
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Windows.Forms;
+using KeePassLib;
+using KeePassRPC.Models.Shared;
 
 namespace KeePassRPC.Forms
 {
@@ -28,7 +28,7 @@ namespace KeePassRPC.Forms
             if (ParentForm != null)
             {
                 ParentForm.FormClosing +=
-                  delegate (object aSender, FormClosingEventArgs aEventArgs)
+                  delegate
                   {
                       if (ParentForm.DialogResult == DialogResult.OK)
                       {
@@ -54,8 +54,8 @@ namespace KeePassRPC.Forms
         private MatchAccuracyMethod DetermineDefaultMatchAccuracy()
         {
             if (radioButton6.Checked) return MatchAccuracyMethod.Exact;
-            else if (radioButton5.Checked) return MatchAccuracyMethod.Hostname;
-            else return MatchAccuracyMethod.Domain;
+            if (radioButton5.Checked) return MatchAccuracyMethod.Hostname;
+            return MatchAccuracyMethod.Domain;
         }
 
         private void PresentDefaultPlaceholderHandling()
@@ -67,7 +67,7 @@ namespace KeePassRPC.Forms
         private PlaceholderHandling DetermineDefaultPlaceholderHandling()
         {
             if (radioButton8.Checked) return PlaceholderHandling.Enabled;
-            else return PlaceholderHandling.Disabled;
+            return PlaceholderHandling.Disabled;
         }
 
         private Dictionary<string, MatchAccuracyMethod> DetermineMatchedURLAccuracyOverrides()
@@ -167,13 +167,13 @@ namespace KeePassRPC.Forms
             switch (mam)
             {
                 case MatchAccuracyMethod.Domain:
-                    listView1.Items.Add(new ListViewItem(new string[] { domain, "Domain" }));
+                    listView1.Items.Add(new ListViewItem(new[] { domain, "Domain" }));
                     break;
                 case MatchAccuracyMethod.Hostname:
-                    listView1.Items.Add(new ListViewItem(new string[] { domain, "Hostname" }));
+                    listView1.Items.Add(new ListViewItem(new[] { domain, "Hostname" }));
                     break;
                 case MatchAccuracyMethod.Exact:
-                    listView1.Items.Add(new ListViewItem(new string[] { domain, "Exact" }));
+                    listView1.Items.Add(new ListViewItem(new[] { domain, "Exact" }));
                     break;
             }
         }

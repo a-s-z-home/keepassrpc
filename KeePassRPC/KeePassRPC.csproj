@@ -119,7 +119,6 @@
   <ItemGroup>
     <Compile Include="BigInteger.cs" />
     <Compile Include="DatabaseConfig.cs" />
-    <Compile Include="DataExchangeModel.cs" />
     <Compile Include="DpiFix.cs" />
     <Compile Include="Extensions.cs" />
     <Compile Include="Forms\AuthForm.cs">
@@ -188,6 +187,12 @@
     <Compile Include="Forms\WelcomeForm.Designer.cs">
       <DependentUpon>WelcomeForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="IconCache.cs" />
+    <Compile Include="JsonRpc\ClientMetadata.cs" />
+    <Compile Include="JsonRpc\IJsonRpcClientMetadataProperty.cs" />
+    <Compile Include="JsonRpc\IJsonRpcRequestLifetimeNotice.cs" />
+    <Compile Include="JsonRpc\KprpcJsonRpcDispatcher.cs" />
+    <Compile Include="JsonRpc\KprpcJsonRpcService.cs" />
     <Compile Include="KeePassRPCClient.cs" />
     <Compile Include="KeePassRPCExt.cs">
     </Compile>
@@ -201,9 +206,55 @@
     <Compile Include="Forms\OptionsForm.Designer.cs">
       <DependentUpon>OptionsForm.cs</DependentUpon>
     </Compile>
+    <Compile Include="KeePassRPCService.DTOV1.cs" />
+    <Compile Include="KeePassRPCService.DTOV2.cs" />
+    <Compile Include="KeePassRPCService.JSONRPC.cs" />
     <Compile Include="KeyChallengeResponse.cs" />
     <Compile Include="KeyContainerClass.cs" />
     <Compile Include="MatchAccuracyMethod.cs" />
+    <Compile Include="Models\DataExchange\ApplicationMetadata.cs" />
+    <Compile Include="Models\DataExchange\AuthenticationResult.cs" />
+    <Compile Include="Models\DataExchange\Configuration.cs" />
+    <Compile Include="Models\DataExchange\Database.cs" />
+    <Compile Include="Models\DataExchange\Utilities.cs" />
+    <Compile Include="Models\DataExchange\Entry.cs" />
+    <Compile Include="Models\DataExchange\Error.cs" />
+    <Compile Include="Models\DataExchange\ErrorCode.cs" />
+    <Compile Include="Models\DataExchange\Group.cs" />
+    <Compile Include="Models\DataExchange\JSONRPCContainer.cs" />
+    <Compile Include="Models\DataExchange\KeyParams.cs" />
+    <Compile Include="Models\DataExchange\KPRPCMessage.cs" />
+    <Compile Include="Models\DataExchange\LightEntry.cs" />
+    <Compile Include="Models\DataExchange\LoginSearchType.cs" />
+    <Compile Include="Models\DataExchange\MatchAccuracy.cs" />
+    <Compile Include="Models\DataExchange\MatchAccuracyEnum.cs" />
+    <Compile Include="Models\DataExchange\Signal.cs" />
+    <Compile Include="Models\DataExchange\SRPParams.cs" />
+    <Compile Include="Models\DataExchange\V2\Database2.cs" />
+    <Compile Include="Models\DataExchange\V2\DatabasesAndIcons.cs" />
+    <Compile Include="Models\DataExchange\V2\Entry2.cs" />
+    <Compile Include="Models\DataExchange\V2\Group2.cs" />
+    <Compile Include="Models\DataExchange\V2\Icon.cs" />
+    <Compile Include="Models\DataExchange\V2\LightEntry2.cs" />
+    <Compile Include="Models\GuidService.cs" />
+    <Compile Include="Models\IGuidService.cs" />
+    <Compile Include="Models\Persistent\EntryConfigv1.cs" />
+    <Compile Include="Models\Persistent\EntryConfigv2.cs" />
+    <Compile Include="Models\Shared\EntryAutomationBehaviour.cs" />
+    <Compile Include="Models\Shared\EntryMatcher.cs" />
+    <Compile Include="Models\Shared\EntryMatcherConfig.cs" />
+    <Compile Include="Models\Shared\EntryMatcherType.cs" />
+    <Compile Include="Models\Shared\Field.cs" />
+    <Compile Include="Models\Shared\FieldMatcherConfig.cs" />
+    <Compile Include="Models\Shared\FieldMatcherType.cs" />
+    <Compile Include="Models\Shared\FormField.cs" />
+    <Compile Include="Models\Shared\FieldMatcher.cs" />
+    <Compile Include="Models\Shared\FormFieldType.cs" />
+    <Compile Include="Models\Shared\MatchAction.cs" />
+    <Compile Include="Models\Shared\MatcherLogic.cs" />
+    <Compile Include="Models\Shared\FieldType.cs" />
+    <Compile Include="Models\Shared\PlaceholderHandling.cs" />
+    <Compile Include="Models\Shared\ResolvedField.cs" />
     <Compile Include="Native.cs" />
     <Compile Include="Properties\AssemblyInfo.cs" />
     <Compile Include="Properties\Resources.Designer.cs">
@@ -376,6 +427,21 @@
       copy "$(ProjectDir)Forms\*.cs" "%25KPPTempDir%25\Forms"
       copy "$(ProjectDir)Forms\*.resx" "%25KPPTempDir%25\Forms"
       if errorlevel 1 goto BuildEventFailed
+      mkdir "%25KPPTempDir%25\Models"
+      mkdir "%25KPPTempDir%25\Models\DataExchange"
+      mkdir "%25KPPTempDir%25\Models\DataExchange\V2"
+      mkdir "%25KPPTempDir%25\Models\Persistent"
+      mkdir "%25KPPTempDir%25\Models\Shared"
+      copy "$(ProjectDir)Models\DataExchange\"*.cs "%25KPPTempDir%25\Models\DataExchange"
+      copy "$(ProjectDir)Models\DataExchange\V2\"*.cs "%25KPPTempDir%25\Models\DataExchange\V2"
+      copy "$(ProjectDir)Models\Persistent\"*.cs "%25KPPTempDir%25\Models\Persistent"
+      copy "$(ProjectDir)Models\Shared\"*.cs "%25KPPTempDir%25\Models\Shared"
+      copy "$(ProjectDir)Models\"*.cs "%25KPPTempDir%25\Models"
+      if errorlevel 1 goto BuildEventFailed
+      mkdir "%25KPPTempDir%25\JsonRpc"
+      copy "$(ProjectDir)JsonRpc\"*.cs "%25KPPTempDir%25\JsonRpc"
+      if errorlevel 1 goto BuildEventFailed
+
       mkdir "%25KPPTempDir%25\Properties"
       copy "$(ProjectDir)Properties\AssemblyInfo.cs" "%25KPPTempDir%25\Properties\AssemblyInfo.cs"
       copy "$(ProjectDir)Properties\Resources.resx" "%25KPPTempDir%25\Properties\Resources.resx"
@@ -449,13 +515,17 @@
       export KPDir="${HOME}/keepass-dev/"
       export KPPDir=${KPDir}Plugins/
       export KPPTempDir="${KPPDir}$(ProjectName)"
+
+      echo KPDir: ${KPDir}
+      echo KPPDir: ${KPPDir}
+      echo KPPTempDir: ${KPPTempDir}
             
       rm -f "${KPPDir}$(ProjectName).dll"
       rm -f "${KPPDir}$(ProjectName).pdb"
-      rm -f "${KPPDir}\Jayrock.dll"
-      rm -f "${KPPDir}\Jayrock.Json.dll"
-      rm -f "${KPPDir}\Fleck2.dll"
-      rm -f "${KPPDir}\DomainPublicSuffix.dll"
+      rm -f "${KPPDir}Jayrock.dll"
+      rm -f "${KPPDir}Jayrock.Json.dll"
+      rm -f "${KPPDir}Fleck2.dll"
+      rm -f "${KPPDir}DomainPublicSuffix.dll"
       echo Debug DLLs deleted
       
       # create temporary directory
@@ -463,11 +533,6 @@
       mkdir "${KPPTempDir}"
       if [ $? = 1 ]; then echo POSTBUILDSTEP for $(ProjectName) FAILED - prep temp dir; exit 1; fi
       echo Temporary directory created
-            
-      cp "Jayrock.dll" "${KPPDir}Jayrock.dll"
-      cp "Jayrock.Json.dll" "${KPPDir}Jayrock.Json.dll"
-      cp "Fleck2.dll" "${KPPDir}Fleck2.dll"
-      cp "DomainPublicSuffix.dll" "${KPPDir}DomainPublicSuffix.dll"
       
       # copy relevant project files to temporary directory
       # (for simple KeePass plugins you may need to
@@ -487,6 +552,22 @@
       cp "$(ProjectDir)Forms\"*.cs "${KPPTempDir}\Forms"
       cp "$(ProjectDir)Forms\"*.resx "${KPPTempDir}\Forms"
       if [ $? = 1 ]; then echo POSTBUILDSTEP for $(ProjectName) FAILED - copy forms sources; exit 1; fi
+            
+      mkdir "${KPPTempDir}\Models"
+      mkdir "${KPPTempDir}\Models\DataExchange"
+      mkdir "${KPPTempDir}\Models\DataExchange\V2"
+      mkdir "${KPPTempDir}\Models\Persistent"
+      mkdir "${KPPTempDir}\Models\Shared"
+      cp "$(ProjectDir)Models\DataExchange\"*.cs "${KPPTempDir}\Models\DataExchange"
+      cp "$(ProjectDir)Models\DataExchange\V2\"*.cs "${KPPTempDir}\Models\DataExchange\V2"
+      cp "$(ProjectDir)Models\Persistent\"*.cs "${KPPTempDir}\Models\Persistent"
+      cp "$(ProjectDir)Models\Shared\"*.cs "${KPPTempDir}\Models\Shared"
+      cp "$(ProjectDir)Models\"*.cs "${KPPTempDir}\Models"
+      if [ $? = 1 ]; then echo POSTBUILDSTEP for $(ProjectName) FAILED - copy Models sources; exit 1; fi
+            
+      mkdir "${KPPTempDir}\JsonRpc"
+      cp "$(ProjectDir)JsonRpc\"*.cs "${KPPTempDir}\JsonRpc"
+      if [ $? = 1 ]; then echo POSTBUILDSTEP for $(ProjectName) FAILED - copy JsonRpc sources; exit 1; fi
             
       mkdir "${KPPTempDir}\Properties"
       cp "$(ProjectDir)Properties\AssemblyInfo.cs" "${KPPTempDir}\Properties\AssemblyInfo.cs"

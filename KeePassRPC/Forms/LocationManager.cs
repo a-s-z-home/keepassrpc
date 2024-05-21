@@ -1,17 +1,12 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.ComponentModel;
-using System.Data;
-using System.Drawing;
-using System.Text;
 using System.Windows.Forms;
-using KeePass.Plugins;
+using KeePassRPC.Properties;
 
 namespace KeePassRPC.Forms
 {
     public partial class LocationManager : Form
     {
-        KeePassRPCExt _plugin;
+        private KeePassRPCExt _plugin;
 
         public LocationManager(KeePassRPCExt plugin)
         {
@@ -19,7 +14,7 @@ namespace KeePassRPC.Forms
             InitializeComponent();
             button1.Enabled = false;
             button2.Enabled = false;
-            Icon = global::KeePassRPC.Properties.Resources.KPRPCico;
+            Icon = Resources.KPRPCico;
         }
 
         private void button3_Click(object sender, EventArgs e)
@@ -86,7 +81,7 @@ namespace KeePassRPC.Forms
             string klconf = _plugin._host.CustomConfig.GetString("KeePassRPC.knownLocations");
             if (!string.IsNullOrEmpty(klconf))
             {
-                string[] knownLocations = klconf.Split(new char[] { ',' });
+                string[] knownLocations = klconf.Split(',');
                 foreach (string location in knownLocations)
                 {
                     listBox1.Items.Add(location);

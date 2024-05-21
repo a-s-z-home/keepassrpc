@@ -1,16 +1,16 @@
 ﻿using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Drawing;
-using System.Data;
-using System.Text;
+using System.Linq;
 using System.Windows.Forms;
-using KeePassLib;
-using KeePassLib.Security;
-using KeePass.UI;
-using KeePassRPC.DataExchangeModel;
+using Jayrock.Json.Conversion;
 using KeePass.Forms;
+using KeePass.UI;
+using KeePassLib;
 using KeePassLib.Collections;
+using KeePassRPC.Models;
+using KeePassRPC.Models.DataExchange;
+using KeePassRPC.Models.Persistent;
+using KeePassRPC.Models.Shared;
 
 namespace KeePassRPC.Forms
 {
@@ -20,42 +20,51 @@ namespace KeePassRPC.Forms
     public partial class KeeEntryUserControl : UserControl
     {
         private PwEntry _entry;
-        KeePassRPCExt KeePassRPCPlugin;
-        PwEntryForm _pwEntryForm;
-        ProtectedStringDictionary _strings;
-        EntryConfig _conf;
-        DatabaseConfig _dbConf;
+        private KeePassRPCExt KeePassRPCPlugin;
+        private PwEntryForm _pwEntryForm;
+        private ProtectedStringDictionary _strings;
+        private StringDictionaryEx _cd;
+        private EntryConfigv2 _conf;
+        private DatabaseConfig _dbConf;
 
         public KeeEntryUserControl(KeePassRPCExt keePassRPCPlugin, PwEntry entry,
-            CustomListViewEx advancedListView, PwEntryForm pwEntryForm, ProtectedStringDictionary strings)
+            CustomListViewEx advancedListView, PwEntryForm pwEntryForm, ProtectedStringDictionary strings, StringDictionaryEx customData)
         {
             KeePassRPCPlugin = keePassRPCPlugin;
             _entry = entry;
             InitializeComponent();
             _pwEntryForm = pwEntryForm;
             _strings = strings;
+            _cd = customData;
             _dbConf = KeePassRPCPlugin._host.Database.GetKPRPCConfig();
-            _conf = entry.GetKPRPCConfig(strings, _dbConf.DefaultMatchAccuracy);
+            _conf = entry.GetKPRPCConfigNormalised(strings, _dbConf.DefaultMatchAccuracy);
         }
 
-        private void changeAdvancedString(string name, string value, bool protect)
+        private void UpdateKPRPCJSON(EntryConfigv2 conf)
         {
-            _strings.Set(name, new ProtectedString(protect, value));
-        }
-
-        private void UpdateKPRPCJSON(EntryConfig _conf)
-        {
+            EntryConfigv2 defaultConf = (new EntryConfigv1(KeePassRPCPlugin._host.Database.GetKPRPCConfig().DefaultMatchAccuracy)).ConvertToV2(new GuidService());
+            
             // if the config is identical to an empty (default) config, only update if a JSON string already exists
-            if (!_conf.Equals(new EntryConfig(KeePassRPCPlugin._host.Database.GetKPRPCConfig().DefaultMatchAccuracy)) || _strings.GetKeys().Contains("KPRPC JSON"))
-                changeAdvancedString("KPRPC JSON", Jayrock.Json.Conversion.JsonConvert.ExportToString(_conf), true);
+            if (!conf.Equals(defaultConf) || _cd.Exists("KPRPC JSON"))
+            {
+                _cd.Set("KPRPC JSON", JsonConvert.ExportToString(conf));
+                if (_strings.Exists("KPRPC JSON"))
+                {
+                    _strings.Remove("KPRPC JSON");
+                }
+            }
         }
         
         private void checkBoxHideFromKee_CheckedChanged(object sender, EventArgs e)
         {
             if (checkBoxHideFromKee.Checked)
             {
-                _conf.Hide = true;
-                label6.Enabled = false;
+                var list = _conf.MatcherConfigs.ToList();
+                if (list.All(emc => emc.MatcherType != EntryMatcherType.Hide))
+                {
+                    list.Add(new EntryMatcherConfig { MatcherType = EntryMatcherType.Hide });
+                }
+                _conf.MatcherConfigs = list.ToArray();
                 groupBox1.Enabled = false;
                 groupBox2.Enabled = false;
                 groupBox3.Enabled = false;
@@ -65,8 +74,9 @@ namespace KeePassRPC.Forms
             }
             else
             {
-                _conf.Hide = false;
-                label6.Enabled = true;
+                var list = _conf.MatcherConfigs.ToList();
+                list.RemoveAll(emc => emc.MatcherType == EntryMatcherType.Hide);
+                _conf.MatcherConfigs = list.ToArray();
                 groupBox1.Enabled = true;
                 groupBox2.Enabled = true;
                 groupBox3.Enabled = true;
@@ -79,22 +89,19 @@ namespace KeePassRPC.Forms
 
         private void KeeEntryUserControl_Load(object sender, EventArgs e)
         {
-            bool kfNeverAutoFill = false;
-            bool kfAlwaysAutoFill = false;
-            bool kfNeverAutoSubmit = false;
-            bool kfAlwaysAutoSubmit = false;
-
             if (_conf == null)
                 return;
 
-            this.checkBoxHideFromKee.CheckedChanged += new System.EventHandler(this.checkBoxHideFromKee_CheckedChanged);
+            checkBoxHideFromKee.CheckedChanged += checkBoxHideFromKee_CheckedChanged;
 
-            if (_conf.Hide) { checkBoxHideFromKee.Checked = true; }
-            if (_conf.GetMatchAccuracyMethod() == MatchAccuracyMethod.Exact)
+            if (_conf.MatcherConfigs != null && _conf.MatcherConfigs.Any(emc => emc != null && emc.MatcherType == EntryMatcherType.Hide)) { checkBoxHideFromKee.Checked = true; }
+            var urlMc = _conf.MatcherConfigs != null ? _conf.MatcherConfigs.FirstOrDefault(emc => emc != null && emc.MatcherType == EntryMatcherType.Url) : null;
+            if (urlMc == null || urlMc.UrlMatchMethod == MatchAccuracyMethod.Exact)
             {
+                // Shouldn't ever be null but just in case we come across bad data we make the most secure assumption even though it will most likely break some behaviours
                 radioButton3.Checked = true;
             }
-            else if (_conf.GetMatchAccuracyMethod() == MatchAccuracyMethod.Hostname)
+            else if (urlMc.UrlMatchMethod == MatchAccuracyMethod.Hostname)
             {
                 radioButton2.Checked = true;
             }
@@ -109,78 +116,64 @@ namespace KeePassRPC.Forms
                 case MatchAccuracyMethod.Hostname: defaultRadioButton = radioButton2; break;
                 case MatchAccuracyMethod.Domain: defaultRadioButton = radioButton1; break;
             }
-            toolTipRealm.SetToolTip(defaultRadioButton, "This is the default behaviour for new entries. Change in the Database Settings dialog.");
 
-            if (_conf.NeverAutoFill) { kfNeverAutoFill = true; }
-            if (_conf.AlwaysAutoFill) { kfAlwaysAutoFill = true; }
-            if (_conf.NeverAutoSubmit) { kfNeverAutoSubmit = true; }
-            if (_conf.AlwaysAutoSubmit) { kfAlwaysAutoSubmit = true; }
-            if (_conf.Priority != 0)
-                label6.Text = "You previously set the priority of this entry to " + _conf.Priority +
-                              ". Since Kee 3.5 (2020) this has had no effect. You don't need to do anything. This message will be removed in a future KeePassRPC version.";
-            else
-                label6.Text = "";
-                
+            if (defaultRadioButton != null)
+            {
+                toolTipRealm.SetToolTip(defaultRadioButton,
+                    "This is the default behaviour for new entries. Change in the Database Settings dialog.");
+            }
+
             listNormalURLs = new List<string>();
             listNormalBlockedURLs = new List<string>();
             listRegExURLs = new List<string>();
             listRegExBlockedURLs = new List<string>();
 
-            if (_conf.AltURLs != null) listNormalURLs.AddRange(_conf.AltURLs);
-            if (_conf.BlockedURLs != null) listNormalBlockedURLs.AddRange(_conf.BlockedURLs);
-            if (_conf.RegExURLs != null) listRegExURLs.AddRange(_conf.RegExURLs);
-            if (_conf.RegExBlockedURLs != null) listRegExBlockedURLs.AddRange(_conf.RegExBlockedURLs);
+            if (_conf.AltUrls != null) listNormalURLs.AddRange(_conf.AltUrls);
+            if (_conf.BlockedUrls != null) listNormalBlockedURLs.AddRange(_conf.BlockedUrls);
+            if (_conf.RegExUrls != null) listRegExURLs.AddRange(_conf.RegExUrls);
+            if (_conf.RegExBlockedUrls != null) listRegExBlockedURLs.AddRange(_conf.RegExBlockedUrls);
 
-            textBoxKeeRealm.Text = _conf.HTTPRealm;
+            textBoxKeeRealm.Text = _conf.HttpRealm;
 
-            bool standardPasswordFound = false;
-            bool standardUsernameFound = false;
-
-            // Read the list of form field objects and create ListViewItems for display to the user
-            if (_conf.FormFieldList != null)
+            // Read the list of field objects and create ListViewItems for display to the user
+            if (_conf.Fields != null)
             {
-                foreach (FormField ff in _conf.FormFieldList)
+                foreach (Field field in _conf.Fields)
                 {
-                    string type = Utilities.FormFieldTypeToDisplay(ff.Type, false);
+                    string type = Utilities.FieldTypeToDisplay(field.Type, false);
 
                     // Override display of standard variables 
-                    string value = ff.Value;
-                    if (ff.Type == FormFieldType.FFTpassword)
+                    string value = field.Value ?? "";
+                    if (field.Type == FieldType.Password)
                         value = "********";
-                    if (ff.DisplayName == "KeePass username")
+                    if (field.ValuePath == PwDefs.UserNameField)
                     {
-                        standardUsernameFound = true;
-                        value = ff.DisplayName;
+                        value = "KeePass username";
                     }
-                    if (ff.DisplayName == "KeePass password")
+                    if (field.ValuePath == PwDefs.PasswordField)
                     {
-                        standardPasswordFound = true;
-                        value = ff.DisplayName;
+                        value = "KeePass password";
                     }
-                    if (ff.Type == FormFieldType.FFTcheckbox)
+                    if (field.Type == FieldType.Toggle)
                     {
-                        value = ff.Value == "KEEFOX_CHECKED_FLAG_TRUE" ? "Enabled" : "Disabled";
+                        value = field.Value == "KEEFOX_CHECKED_FLAG_TRUE" ? "Enabled" : "Disabled";
                     }
-                    ListViewItem lvi = new ListViewItem(new string[] { ff.Name, value, ff.Id, type, ff.Page.ToString() });
-                    lvi.Tag = ff;
+                    
+                    // null checks shouldn't be necessary but seems to be bugs in Mono runtime sometimes relating to GetValueOrDefault so being over-cautious here
+                    var customFmc = field.MatcherConfigs != null ? field.MatcherConfigs.FirstOrDefault(fmc => fmc != null && (fmc.MatcherType == null || fmc.MatcherType.GetValueOrDefault(FieldMatcherType.Custom) == FieldMatcherType.Custom)) : null;
+                    string id = "";
+                    string name = "";
+                    if (customFmc != null)
+                    {
+                        var cmId = customFmc.CustomMatcher != null && customFmc.CustomMatcher.Ids != null ? customFmc.CustomMatcher.Ids.FirstOrDefault() : null;
+                        var cmName = customFmc.CustomMatcher != null && customFmc.CustomMatcher.Names != null ? customFmc.CustomMatcher.Names.FirstOrDefault() : null;
+                        if (cmId != null) id = cmId;
+                        if (cmName != null) name = cmName;
+                    }
+                    ListViewItem lvi = new ListViewItem(new[] { name, value, id, type, field.Page.ToString() });
+                    lvi.Tag = field;
                     AddFieldListItem(lvi);
                 }
-            }
-
-            // if we didn't find specific details about the username and
-            // password, we'll pre-populate the standard KeePass ones so
-            // users can easily change things like page number and ID
-
-            // we don't add them to the list of actual fields though - just the display list.
-            if (!standardPasswordFound)
-            {
-                ListViewItem lvi = new ListViewItem(new string[] { "", "KeePass password", "", "password", "1" });
-                AddFieldListItem(lvi);
-            }
-            if (!standardUsernameFound)
-            {
-                ListViewItem lvi = new ListViewItem(new string[] { "", "KeePass username", "", "username", "1" });
-                AddFieldListItem(lvi);
             }
 
             ReadURLStrings();
@@ -188,40 +181,25 @@ namespace KeePassRPC.Forms
             comboBoxAutoSubmit.Text = "Use Kee setting";
             comboBoxAutoFill.Text = "Use Kee setting";
 
-            // There are implicit behaviours based on single option choices so we'll make them explicit now so that the GUI accurately reflects the 
-            // strings stored in the advanced tab
-            if (kfNeverAutoFill)
-                currentBehaviour = EntryBehaviour.NeverAutoFillNeverAutoSubmit;
-            else if (kfAlwaysAutoSubmit)
-                currentBehaviour = EntryBehaviour.AlwaysAutoFillAlwaysAutoSubmit;
-            else if (kfAlwaysAutoFill && kfNeverAutoSubmit)
-                currentBehaviour = EntryBehaviour.AlwaysAutoFillNeverAutoSubmit;
-            else if (kfNeverAutoSubmit)
-                currentBehaviour = EntryBehaviour.NeverAutoSubmit;
-            else if (kfAlwaysAutoFill)
-                currentBehaviour = EntryBehaviour.AlwaysAutoFill;
-            else
-                currentBehaviour = EntryBehaviour.Default;
-            changeBehaviourState(currentBehaviour);
+            _currentAutomationBehaviour = _conf.Behaviour.GetValueOrDefault(EntryAutomationBehaviour.Default);
+            changeBehaviourState(_currentAutomationBehaviour);
 
-            this.comboBoxAutoSubmit.SelectedIndexChanged += new System.EventHandler(this.comboBoxAutoSubmit_SelectedIndexChanged);
-            this.comboBoxAutoFill.SelectedIndexChanged += new System.EventHandler(this.comboBoxAutoFill_SelectedIndexChanged);
-
+            comboBoxAutoSubmit.SelectedIndexChanged += comboBoxAutoSubmit_SelectedIndexChanged;
+            comboBoxAutoFill.SelectedIndexChanged += comboBoxAutoFill_SelectedIndexChanged;            
             string realmTooltip = "Set this to the realm (what the \"site says\") in the HTTP authentication popup dialog box for a more accurate match";
-            toolTipRealm.SetToolTip(this.textBoxKeeRealm, realmTooltip);
-            toolTipRealm.SetToolTip(this.labelRealm, realmTooltip);
+            toolTipRealm.SetToolTip(textBoxKeeRealm, realmTooltip);
+            toolTipRealm.SetToolTip(labelRealm, realmTooltip);
         }
 
         private void textBoxKeeRealm_TextChanged(object sender, EventArgs e)
         {
-            string realm = ((System.Windows.Forms.TextBoxBase)sender).Text;
+            string realm = ((TextBoxBase)sender).Text;
 
             if (!string.IsNullOrEmpty(realm))
-                _conf.HTTPRealm = realm;
+                _conf.HttpRealm = realm;
             else
-                _conf.HTTPRealm = null;
+                _conf.HttpRealm = null;
             UpdateKPRPCJSON(_conf);
-            return;
         }
 
         private void comboBoxAutoFill_SelectedIndexChanged(object sender, EventArgs e)
@@ -230,20 +208,20 @@ namespace KeePassRPC.Forms
             {
                 case "Use Kee setting":
                     if (comboBoxAutoSubmit.Text == "Never")
-                        changeBehaviourState(EntryBehaviour.NeverAutoSubmit);
+                        changeBehaviourState(EntryAutomationBehaviour.NeverAutoSubmit);
                     else
-                        changeBehaviourState(EntryBehaviour.Default);
+                        changeBehaviourState(EntryAutomationBehaviour.Default);
                     break;
                 case "Never":
-                    changeBehaviourState(EntryBehaviour.NeverAutoFillNeverAutoSubmit);
+                    changeBehaviourState(EntryAutomationBehaviour.NeverAutoFillNeverAutoSubmit);
                     break;
                 case "Always":
                     if (comboBoxAutoSubmit.Text == "Never")
-                        changeBehaviourState(EntryBehaviour.AlwaysAutoFillNeverAutoSubmit);
+                        changeBehaviourState(EntryAutomationBehaviour.AlwaysAutoFillNeverAutoSubmit);
                     else if (comboBoxAutoSubmit.Text == "Always")
-                        changeBehaviourState(EntryBehaviour.AlwaysAutoFillAlwaysAutoSubmit);
+                        changeBehaviourState(EntryAutomationBehaviour.AlwaysAutoFillAlwaysAutoSubmit);
                     else
-                        changeBehaviourState(EntryBehaviour.AlwaysAutoFill);
+                        changeBehaviourState(EntryAutomationBehaviour.AlwaysAutoFill);
                     break;
             }
         }
@@ -254,95 +232,67 @@ namespace KeePassRPC.Forms
             {
                 case "Use Kee setting": 
                     if (comboBoxAutoFill.Text == "Always") 
-                        changeBehaviourState(EntryBehaviour.AlwaysAutoFill); 
+                        changeBehaviourState(EntryAutomationBehaviour.AlwaysAutoFill); 
                     else
-                        changeBehaviourState(EntryBehaviour.Default);
+                        changeBehaviourState(EntryAutomationBehaviour.Default);
                     break;
                 case "Never":
                     if (comboBoxAutoFill.Text == "Always")
-                        changeBehaviourState(EntryBehaviour.AlwaysAutoFillNeverAutoSubmit);
+                        changeBehaviourState(EntryAutomationBehaviour.AlwaysAutoFillNeverAutoSubmit);
                     else if (comboBoxAutoFill.Text == "Never")
-                        changeBehaviourState(EntryBehaviour.NeverAutoFillNeverAutoSubmit);
+                        changeBehaviourState(EntryAutomationBehaviour.NeverAutoFillNeverAutoSubmit);
                     else
-                        changeBehaviourState(EntryBehaviour.NeverAutoSubmit);
+                        changeBehaviourState(EntryAutomationBehaviour.NeverAutoSubmit);
                     break;
                 case "Always":
-                    changeBehaviourState(EntryBehaviour.AlwaysAutoFillAlwaysAutoSubmit);
+                    changeBehaviourState(EntryAutomationBehaviour.AlwaysAutoFillAlwaysAutoSubmit);
                     break;
             }
         }
 
-        enum EntryBehaviour
-        {
-            Default,
-            NeverAutoFillNeverAutoSubmit,
-            NeverAutoSubmit,
-            AlwaysAutoFillAlwaysAutoSubmit,
-            AlwaysAutoFill,
-            AlwaysAutoFillNeverAutoSubmit
-        }
+        private EntryAutomationBehaviour _currentAutomationBehaviour = EntryAutomationBehaviour.Default;
 
-        EntryBehaviour currentBehaviour = EntryBehaviour.Default;
-
-        private void changeBehaviourState(EntryBehaviour behav)
+        private void changeBehaviourState(EntryAutomationBehaviour behav)
         {
             switch (behav)
             {
-                case EntryBehaviour.AlwaysAutoFill:
-                    _conf.AlwaysAutoFill = true;
-                    _conf.AlwaysAutoSubmit = false;
-                    _conf.NeverAutoFill = false;
-                    _conf.NeverAutoSubmit = false;
+                case EntryAutomationBehaviour.AlwaysAutoFill:
+                    _conf.Behaviour = EntryAutomationBehaviour.AlwaysAutoFill;
                     comboBoxAutoFill.Text = "Always";
                     comboBoxAutoSubmit.Text = "Use Kee setting";
                     comboBoxAutoFill.Enabled = true;
                     comboBoxAutoSubmit.Enabled = true;
                     break;
-                case EntryBehaviour.NeverAutoSubmit:
-                    _conf.AlwaysAutoFill = false;
-                    _conf.AlwaysAutoSubmit = false;
-                    _conf.NeverAutoFill = false;
-                    _conf.NeverAutoSubmit = true;
+                case EntryAutomationBehaviour.NeverAutoSubmit:
+                    _conf.Behaviour = EntryAutomationBehaviour.NeverAutoSubmit;
                     comboBoxAutoFill.Text = "Use Kee setting";
                     comboBoxAutoSubmit.Text = "Never";
                     comboBoxAutoFill.Enabled = true;
                     comboBoxAutoSubmit.Enabled = true;
                     break;
-                case EntryBehaviour.AlwaysAutoFillAlwaysAutoSubmit:
-                    _conf.AlwaysAutoFill = true;
-                    _conf.AlwaysAutoSubmit = true;
-                    _conf.NeverAutoFill = false;
-                    _conf.NeverAutoSubmit = false;
+                case EntryAutomationBehaviour.AlwaysAutoFillAlwaysAutoSubmit:
+                    _conf.Behaviour = EntryAutomationBehaviour.AlwaysAutoFillAlwaysAutoSubmit;
                     comboBoxAutoSubmit.Text = "Always";
                     comboBoxAutoFill.Text = "Always";
                     comboBoxAutoFill.Enabled = false;
                     comboBoxAutoSubmit.Enabled = true;
                     break;
-                case EntryBehaviour.NeverAutoFillNeverAutoSubmit:
-                    _conf.AlwaysAutoFill = false;
-                    _conf.AlwaysAutoSubmit = false;
-                    _conf.NeverAutoFill = true;
-                    _conf.NeverAutoSubmit = true;
+                case EntryAutomationBehaviour.NeverAutoFillNeverAutoSubmit:
+                    _conf.Behaviour = EntryAutomationBehaviour.NeverAutoFillNeverAutoSubmit;
                     comboBoxAutoFill.Text = "Never";
                     comboBoxAutoSubmit.Text = "Never";
                     comboBoxAutoSubmit.Enabled = false;
                     comboBoxAutoFill.Enabled = true;
                     break;
-                case EntryBehaviour.AlwaysAutoFillNeverAutoSubmit:
-                    _conf.AlwaysAutoFill = true;
-                    _conf.AlwaysAutoSubmit = false;
-                    _conf.NeverAutoFill = false;
-                    _conf.NeverAutoSubmit = true;
+                case EntryAutomationBehaviour.AlwaysAutoFillNeverAutoSubmit:
+                    _conf.Behaviour = EntryAutomationBehaviour.AlwaysAutoFillNeverAutoSubmit;
                     comboBoxAutoFill.Text = "Always";
                     comboBoxAutoSubmit.Text = "Never";
                     comboBoxAutoSubmit.Enabled = true;
                     comboBoxAutoFill.Enabled = true;
                     break;
-                case EntryBehaviour.Default:
-                    _conf.AlwaysAutoFill = false;
-                    _conf.AlwaysAutoSubmit = false;
-                    _conf.NeverAutoFill = false;
-                    _conf.NeverAutoSubmit = false;
+                case EntryAutomationBehaviour.Default:
+                    _conf.Behaviour = null;
                     comboBoxAutoFill.Text = "Use Kee setting";
                     comboBoxAutoSubmit.Text = "Use Kee setting";
                     comboBoxAutoSubmit.Enabled = true;
@@ -350,13 +300,13 @@ namespace KeePassRPC.Forms
                     break;
             }
             UpdateKPRPCJSON(_conf);
-            currentBehaviour = behav;
+            _currentAutomationBehaviour = behav;
         }
 
-        List<string> listNormalURLs = new List<string>();
-        List<string> listRegExURLs = new List<string>();
-        List<string> listNormalBlockedURLs = new List<string>();
-        List<string> listRegExBlockedURLs = new List<string>();
+        private List<string> listNormalURLs = new List<string>();
+        private List<string> listRegExURLs = new List<string>();
+        private List<string> listNormalBlockedURLs = new List<string>();
+        private List<string> listRegExBlockedURLs = new List<string>();
 
         private void buttonURLAdd_Click(object sender, EventArgs e)
         {
@@ -374,25 +324,25 @@ namespace KeePassRPC.Forms
                     if (kfurlf.Match && !kfurlf.RegEx)
                     {
                         listNormalURLs.Add(kfurlf.URL);
-                        ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "Normal", "Match" });
+                        ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "Normal", "Match" });
                         AddURLListItem(lvi);
                     }
                     if (kfurlf.Block && !kfurlf.RegEx)
                     {
                         listNormalBlockedURLs.Add(kfurlf.URL);
-                        ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "Normal", "Block" });
+                        ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "Normal", "Block" });
                         AddURLListItem(lvi);
                     }
                     if (kfurlf.Match && kfurlf.RegEx)
                     {
                         listRegExURLs.Add(kfurlf.URL);
-                        ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "RegEx", "Match" });
+                        ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "RegEx", "Match" });
                         AddURLListItem(lvi);
                     }
                     if (kfurlf.Block && kfurlf.RegEx)
                     {
                         listRegExBlockedURLs.Add(kfurlf.URL);
-                        ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "RegEx", "Block" });
+                        ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "RegEx", "Block" });
                         AddURLListItem(lvi);
                     }
                     UpdateURLStrings();
@@ -435,25 +385,25 @@ namespace KeePassRPC.Forms
                         if (kfurlf.Match && !kfurlf.RegEx)
                         {
                             listNormalURLs.Add(kfurlf.URL);
-                            ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "Normal", "Match" });
+                            ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "Normal", "Match" });
                             AddURLListItem(lvi);
                         }
                         if (kfurlf.Block && !kfurlf.RegEx)
                         {
                             listNormalBlockedURLs.Add(kfurlf.URL);
-                            ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "Normal", "Block" });
+                            ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "Normal", "Block" });
                             AddURLListItem(lvi);
                         }
                         if (kfurlf.Match && kfurlf.RegEx)
                         {
                             listRegExURLs.Add(kfurlf.URL);
-                            ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "RegEx", "Match" });
+                            ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "RegEx", "Match" });
                             AddURLListItem(lvi);
                         }
                         if (kfurlf.Block && kfurlf.RegEx)
                         {
                             listRegExBlockedURLs.Add(kfurlf.URL);
-                            ListViewItem lvi = new ListViewItem(new string[] { kfurlf.URL, "RegEx", "Block" });
+                            ListViewItem lvi = new ListViewItem(new[] { kfurlf.URL, "RegEx", "Block" });
                             AddURLListItem(lvi);
                         }
                         UpdateURLStrings();
@@ -497,23 +447,23 @@ namespace KeePassRPC.Forms
 
         private void UpdateURLStrings()
         {
-            _conf.AltURLs = listNormalURLs.ToArray();
-            _conf.BlockedURLs = listNormalBlockedURLs.ToArray();
-            _conf.RegExURLs = listRegExURLs.ToArray();
-            _conf.RegExBlockedURLs = listRegExBlockedURLs.ToArray();
+            _conf.AltUrls = listNormalURLs.ToArray();
+            _conf.BlockedUrls = listNormalBlockedURLs.ToArray();
+            _conf.RegExUrls = listRegExURLs.ToArray();
+            _conf.RegExBlockedUrls = listRegExBlockedURLs.ToArray();
             UpdateKPRPCJSON(_conf);
         }
 
 
-        private void UpdateFieldStrings()
+        private void UpdateFields()
         {
-            List<FormField> ffs = new List<FormField>();
+            List<Field> fields = new List<Field>();
             foreach (ListViewItem lvi in listView2.Items)
             {
                 if (lvi.Tag != null)
-                    ffs.Add((FormField)lvi.Tag);
+                    fields.Add((Field)lvi.Tag);
             }
-            _conf.FormFieldList = ffs.ToArray();
+            _conf.Fields = fields.ToArray();
             UpdateKPRPCJSON(_conf);
         }
         
@@ -522,22 +472,22 @@ namespace KeePassRPC.Forms
         {
             foreach (string url in listNormalURLs)
             {
-                ListViewItem lvi = new ListViewItem(new string[] { url, "Normal", "Match" });
+                ListViewItem lvi = new ListViewItem(new[] { url, "Normal", "Match" });
                 AddURLListItem(lvi);
             }
             foreach (string url in listNormalBlockedURLs)
             {
-                ListViewItem lvi = new ListViewItem(new string[] { url, "Normal", "Block" });
+                ListViewItem lvi = new ListViewItem(new[] { url, "Normal", "Block" });
                 AddURLListItem(lvi);
             }
             foreach (string url in listRegExURLs)
             {
-                ListViewItem lvi = new ListViewItem(new string[] { url, "RegEx", "Match" });
+                ListViewItem lvi = new ListViewItem(new[] { url, "RegEx", "Match" });
                 AddURLListItem(lvi);
             }
             foreach (string url in listRegExBlockedURLs)
             {
-                ListViewItem lvi = new ListViewItem(new string[] { url, "RegEx", "Block" });
+                ListViewItem lvi = new ListViewItem(new[] { url, "RegEx", "Block" });
                 AddURLListItem(lvi);
             }
         }
@@ -574,34 +524,54 @@ namespace KeePassRPC.Forms
 
         private void buttonFieldAdd_Click(object sender, EventArgs e)
         {
-            using (KeeFieldForm kff = new KeeFieldForm(null, null, null, FormFieldType.FFTtext, 1, PlaceholderHandling.Default))
+            IGuidService guidService = new GuidService();
+            using (KeeFieldForm kff = new KeeFieldForm(null, null, null, FieldType.Text, 1, PlaceholderHandling.Default, ".", false, null, null))
             {
                 if (kff.ShowDialog() == DialogResult.OK)
                 {
-                    FormField ff = new FormField(kff.Name, kff.Name, kff.Value, kff.Type, kff.Id, kff.Page, kff.PlaceholderHandling);
+                    var mc = FieldMatcherConfig.ForSingleClientMatch(kff.Id, kff.Name, kff.HtmlType, kff.QuerySelector);
+                    var newUniqueId = Convert.ToBase64String(guidService.NewGuid().ToByteArray());
+                    var field = new Field
+                    {
+                        Name = newUniqueId,
+                        Page = Math.Max(kff.Page, 1),
+                        ValuePath = ".",
+                        Uuid = newUniqueId,
+                        Type = kff.Type,
+                        MatcherConfigs = new[] { mc },
+                        Value = !string.IsNullOrEmpty(kff.Value) ? kff.Value : null
+                    };
+                    if (kff.PlaceholderHandling == PlaceholderHandling.Default)
+                    {
+                        field.PlaceholderHandling = null;
+                    }
+                    else
+                    {
+                        field.PlaceholderHandling = kff.PlaceholderHandling;
+                    }
 
-                    string type = Utilities.FormFieldTypeToDisplay(kff.Type, false);
+                    string type = Utilities.FieldTypeToDisplay(kff.Type, false);
                     int page = kff.Page;
 
                     // We know any new passwords are not the main Entry password
                     // Also know that the display name can be same as main name
                     string displayValue = kff.Value;
-                    if (kff.Type == FormFieldType.FFTpassword)
+                    if (kff.Type == FieldType.Password)
                     {
                         displayValue = "********";
                     }
-                    if (kff.Type == FormFieldType.FFTcheckbox)
+                    if (kff.Type == FieldType.Toggle)
                     {
                         displayValue = kff.Value == "KEEFOX_CHECKED_FLAG_TRUE" ? "Enabled" : "Disabled";
                     }
 
-                    ListViewItem lvi = new ListViewItem(new string[]
+                    ListViewItem lvi = new ListViewItem(new[]
                     {
                         kff.Name, displayValue, kff.Id, type, page.ToString()
                     });
-                    lvi.Tag = ff;
+                    lvi.Tag = field;
                     AddFieldListItem(lvi);
-                    UpdateFieldStrings();
+                    UpdateFields();
                 }
             }
         }
@@ -610,58 +580,70 @@ namespace KeePassRPC.Forms
         {
             ListView.SelectedListViewItemCollection lvsicSel = listView2.SelectedItems;
 
-            FormField tag = (FormField)lvsicSel[0].Tag;
-            using (KeeFieldForm kff = FormFieldForEditing(lvsicSel, tag))
+            Field tag = (Field)lvsicSel[0].Tag;
+            using (KeeFieldForm kff = FormFieldForEditing(tag))
             {
                 if (kff.ShowDialog() == DialogResult.OK)
                 {
                     string displayValue = kff.Value;
-                    if (kff.Type == FormFieldType.FFTpassword)
+                    if (kff.Type == FieldType.Password)
                     {
                         displayValue = "********";
                     }
 
-                    string displayName = kff.Name;
-                    if (kff.Value == "{PASSWORD}")
+                    string displayName = string.IsNullOrEmpty(tag.Name) ? tag.Uuid : tag.Name;
+                    if (tag.ValuePath == PwDefs.PasswordField)
                     {
-                        displayName = "KeePass password";
+                        displayName = null;
                         displayValue = "KeePass password";
                     }
-                    else if (kff.Value == "{USERNAME}")
+                    else if (tag.ValuePath == PwDefs.UserNameField)
                     {
-                        displayName = "KeePass username";
+                        displayName = null;
                         displayValue = "KeePass username";
                     }
 
-                    if (kff.Type == FormFieldType.FFTcheckbox)
+                    if (kff.Type == FieldType.Toggle)
                     {
                         displayValue = kff.Value == "KEEFOX_CHECKED_FLAG_TRUE" ? "Enabled" : "Disabled";
                     }
 
-                    string type = Utilities.FormFieldTypeToDisplay(kff.Type, false);
+                    string type = Utilities.FieldTypeToDisplay(kff.Type, false);
                     int page = kff.Page;
+                    
+                    var mc = FieldMatcherConfig.ForSingleClientMatch(kff.Id, kff.Name, kff.HtmlType, kff.QuerySelector);
+                    var field = new Field
+                    {
+                        Name = displayName,
+                        Page = Math.Max(page, 1),
+                        ValuePath = tag.ValuePath,
+                        Uuid = tag.Uuid,
+                        Type = kff.Type,
+                        MatcherConfigs = new[] { mc },
+                        Value = !string.IsNullOrEmpty(kff.Value) ? kff.Value : null
+                    };
+                    if (kff.PlaceholderHandling == PlaceholderHandling.Default)
+                    {
+                        field.PlaceholderHandling = null;
+                    }
+                    else
+                    {
+                        field.PlaceholderHandling = kff.PlaceholderHandling;
+                    }
 
-                    ListViewItem lvi = new ListViewItem(new string[] { kff.Name, displayValue, kff.Id, type, page.ToString() });
-                    lvi.Tag = new FormField(kff.Name, displayName, kff.Value, kff.Type, kff.Id, page, kff.PlaceholderHandling);
+                    ListViewItem lvi = new ListViewItem(new[] { kff.Name, displayValue, kff.Id, type, page.ToString() });
+                    lvi.Tag = field;
                     RemoveFieldListItem(lvsicSel[0]);
                     AddFieldListItem(lvi);
-                    UpdateFieldStrings();
+                    UpdateFields();
                 }
             }
         }
 
-        private static KeeFieldForm FormFieldForEditing(ListView.SelectedListViewItemCollection lvsicSel, FormField tag)
+        private static KeeFieldForm FormFieldForEditing(Field tag)
         {
-            KeeFieldForm kfff = null;
-            if (tag != null)
-                kfff = new KeeFieldForm(tag);
-            else if (lvsicSel[0].SubItems[1].Text == "KeePass password")
-                kfff = new KeeFieldForm(lvsicSel[0].SubItems[0].Text, "{PASSWORD}", lvsicSel[0].SubItems[2].Text, FormFieldType.FFTpassword, int.Parse(lvsicSel[0].SubItems[4].Text), PlaceholderHandling.Default);
-            else if (lvsicSel[0].SubItems[1].Text == "KeePass username")
-                kfff = new KeeFieldForm(lvsicSel[0].SubItems[0].Text, "{USERNAME}", lvsicSel[0].SubItems[2].Text, FormFieldType.FFTusername, int.Parse(lvsicSel[0].SubItems[4].Text), PlaceholderHandling.Default);
-            else
-                throw new Exception("Corrupt Entry found!");
-            return kfff;
+            if (tag == null) throw new Exception("Corrupt Entry found!");
+            return KeeFieldForm.FromField(tag);
         }
 
         private void buttonFieldDelete_Click(object sender, EventArgs e)
@@ -669,7 +651,7 @@ namespace KeePassRPC.Forms
             ListView.SelectedListViewItemCollection lvsicSel = listView2.SelectedItems;
             // remove the old field data
             RemoveFieldListItem(lvsicSel[0]);
-            UpdateFieldStrings();
+            UpdateFields();
         }
 
         //ReadFields function????
@@ -725,7 +707,8 @@ namespace KeePassRPC.Forms
         {
             if (radioButton1.Checked)
             {
-                _conf.SetMatchAccuracyMethod(MatchAccuracyMethod.Domain);
+                var mc = _conf.MatcherConfigs.First(emc => emc.MatcherType == EntryMatcherType.Url);
+                mc.UrlMatchMethod = MatchAccuracyMethod.Domain;
             }
             UpdateKPRPCJSON(_conf);
         }
@@ -734,7 +717,8 @@ namespace KeePassRPC.Forms
         {
             if (radioButton2.Checked)
             {
-                _conf.SetMatchAccuracyMethod(MatchAccuracyMethod.Hostname);
+                var mc = _conf.MatcherConfigs.First(emc => emc.MatcherType == EntryMatcherType.Url);
+                mc.UrlMatchMethod = MatchAccuracyMethod.Hostname;
             }
             UpdateKPRPCJSON(_conf);
         }
@@ -743,7 +727,8 @@ namespace KeePassRPC.Forms
         {
             if (radioButton3.Checked)
             {
-                _conf.SetMatchAccuracyMethod(MatchAccuracyMethod.Exact);
+                var mc = _conf.MatcherConfigs.First(emc => emc.MatcherType == EntryMatcherType.Url);
+                mc.UrlMatchMethod = MatchAccuracyMethod.Exact;
             }
             UpdateKPRPCJSON(_conf);
         }
