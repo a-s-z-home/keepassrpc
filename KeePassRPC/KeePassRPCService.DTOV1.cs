@@ -93,8 +93,9 @@ namespace KeePassRPC
                     }
                 }
 
-                if (ff.PlaceholderHandling == PlaceholderHandling.Enabled ||
-                    (ff.PlaceholderHandling == PlaceholderHandling.Default &&
+                var fieldPlaceholderHandling = ff.PlaceholderHandling.GetValueOrDefault(PlaceholderHandling.Default);
+                if (fieldPlaceholderHandling == PlaceholderHandling.Enabled ||
+                    (fieldPlaceholderHandling == PlaceholderHandling.Default &&
                      dbDefaultPlaceholderHandlingEnabled))
                 {
                     enablePlaceholders = true;

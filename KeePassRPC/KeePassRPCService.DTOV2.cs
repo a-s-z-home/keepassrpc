@@ -59,9 +59,10 @@ namespace KeePassRPC
             {
                 if (!fullDetails && field.ValuePath != PwDefs.UserNameField)
                     continue;
-
-                bool enablePlaceholders = field.PlaceholderHandling == PlaceholderHandling.Enabled ||
-                                          (field.PlaceholderHandling == PlaceholderHandling.Default &&
+                
+                var fieldPlaceholderHandling = field.PlaceholderHandling.GetValueOrDefault(PlaceholderHandling.Default);
+                bool enablePlaceholders = fieldPlaceholderHandling == PlaceholderHandling.Enabled ||
+                                          (fieldPlaceholderHandling == PlaceholderHandling.Default &&
                                            dbDefaultPlaceholderHandlingEnabled);
 
                 string ffValue = field.ValuePath == "."
