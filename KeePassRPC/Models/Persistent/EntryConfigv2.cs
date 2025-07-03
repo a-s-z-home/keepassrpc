@@ -1,6 +1,6 @@
 using System;
 using KeePassRPC.Models.Shared;
-using System.Linq;
+using System.Collections;
 
 namespace KeePassRPC.Models.Persistent
 {
@@ -42,7 +42,7 @@ namespace KeePassRPC.Models.Persistent
         {
             if (ReferenceEquals(null, other)) return false;
             if (ReferenceEquals(this, other)) return true;
-            return Version == other.Version && Enumerable.SequenceEqual(AltUrls, other.AltUrls) && Enumerable.SequenceEqual(BlockedUrls, other.BlockedUrls) && Enumerable.SequenceEqual(RegExBlockedUrls, other.RegExBlockedUrls) && Enumerable.SequenceEqual(RegExUrls, other.RegExUrls) && HttpRealm == other.HttpRealm && Enumerable.SequenceEqual(AuthenticationMethods, other.AuthenticationMethods) && Behaviour == other.Behaviour && Enumerable.SequenceEqual(MatcherConfigs, other.MatcherConfigs) && Enumerable.SequenceEqual(Fields, other.Fields);
+            return Version == other.Version && StructuralComparisons.StructuralEqualityComparer.Equals(AltUrls, other.AltUrls) && StructuralComparisons.StructuralEqualityComparer.Equals(BlockedUrls, other.BlockedUrls) && StructuralComparisons.StructuralEqualityComparer.Equals(RegExBlockedUrls, other.RegExBlockedUrls) && StructuralComparisons.StructuralEqualityComparer.Equals(RegExUrls, other.RegExUrls) && HttpRealm == other.HttpRealm && StructuralComparisons.StructuralEqualityComparer.Equals(AuthenticationMethods, other.AuthenticationMethods) && Behaviour == other.Behaviour && StructuralComparisons.StructuralEqualityComparer.Equals(MatcherConfigs, other.MatcherConfigs) && StructuralComparisons.StructuralEqualityComparer.Equals(Fields, other.Fields);
         }
 
         public override bool Equals(object obj)
