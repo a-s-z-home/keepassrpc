@@ -1,5 +1,6 @@
 using System;
 using KeePassRPC.Models.Shared;
+using System.Linq;
 
 namespace KeePassRPC.Models.Persistent
 {
@@ -41,7 +42,7 @@ namespace KeePassRPC.Models.Persistent
         {
             if (ReferenceEquals(null, other)) return false;
             if (ReferenceEquals(this, other)) return true;
-            return Version == other.Version && Equals(AltUrls, other.AltUrls) && Equals(BlockedUrls, other.BlockedUrls) && Equals(RegExBlockedUrls, other.RegExBlockedUrls) && Equals(RegExUrls, other.RegExUrls) && HttpRealm == other.HttpRealm && Equals(AuthenticationMethods, other.AuthenticationMethods) && Behaviour == other.Behaviour && Equals(MatcherConfigs, other.MatcherConfigs) && Equals(Fields, other.Fields);
+            return Version == other.Version && Enumerable.SequenceEqual(AltUrls, other.AltUrls) && Enumerable.SequenceEqual(BlockedUrls, other.BlockedUrls) && Enumerable.SequenceEqual(RegExBlockedUrls, other.RegExBlockedUrls) && Enumerable.SequenceEqual(RegExUrls, other.RegExUrls) && HttpRealm == other.HttpRealm && Enumerable.SequenceEqual(AuthenticationMethods, other.AuthenticationMethods) && Behaviour == other.Behaviour && Enumerable.SequenceEqual(MatcherConfigs, other.MatcherConfigs) && Enumerable.SequenceEqual(Fields, other.Fields);
         }
 
         public override bool Equals(object obj)
